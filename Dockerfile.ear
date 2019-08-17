@@ -1,0 +1,57 @@
+FROM SOURCE_IMAGE
+
+LABEL Author.1="Andy Scollard" Email.1="harold.scollard@t-mobile.com"
+
+ARG SRC_DIR
+ARG CP_REPO
+ARG CP_BASE
+ARG ENV_REPO
+ARG FIRST_ENV
+ARG ENV_CF_ORG
+ARG ENV_CF_SPACE
+ARG CURR_EAR
+ARG BUILD_URL
+ARG OMS_DEPENDS
+ARG VM_DEPENDS
+ARG OMS_BASE
+ARG VM_MODELS
+
+ENV CP_REPO=${CP_REPO}
+ENV CP_BASE=${CP_BASE}
+ENV ENV_REPO=${ENV_REPO}
+ENV STERLING_HOME=/opt/IBM/Sterling95
+
+COPY . /tmp/jenkins
+
+RUN mkdir -p $STERLING_HOME/properties && echo BUILD_URL=$BUILD_URL > $STERLING_HOME/BUILD_URL.txt \
+  && WAS_HOME=/opt/IBM/WebSphere85/AppServer && mkdir -p ~/.ssh && cp $SRC_DIR/key/id_rsa $SRC_DIR/key/known_hosts ~/.ssh && chmod 600 ~/.ssh/id_rsa \
+  && cd /tmp && git clone -b master $ENV_REPO && . /tmp/$CP_REPO/$CP_BASE/db.properties && PATH=$WAS_HOME/java/bin:$PATH \
+  && cd $WAS_HOME/profiles/OMS/etc/ && curl -sO $OMS_DEPENDS/trust.p12 && cd ../bin && ./startServer.sh server1 \
+  && if [ "$CURR_EAR" != "vismod" ] ; then \
+       cd /opt/jdbc && curl -sO ${OMS_DEPENDS}/ojdbc7.jar && cd $WAS_HOME/profiles/OMS/bin \
+	   && sed "s|CURR_EAR|${CURR_EAR}|g;s|CP_BASE|${CP_BASE}|g;s|ENV_CF_ORG|${ENV_CF_ORG}|g;s|STERLING_HOME|${STERLING_HOME}|g; \
+               s|ENV_CF_SPACE|${ENV_CF_SPACE}|g;s|DB_CONNECTION_STRING|${DB_CONNECTION_STRING}|g;s|ORACLEJAR|ojdbc7|g;\
+               s|DB_USERNAME|${DB_USERNAME}|g;s|DB_PASSWORD|${DB_PASSWORD}|g" $SRC_DIR/containers/create_datasource.py > create_datasource.py \
+     ;else \
+       cd /opt/jdbc && curl -sO ${OMS_DEPENDS}/ojdbc7.jar && cd $WAS_HOME/profiles/OMS/bin \
+       && sed "s|CURR_EAR|${CURR_EAR}|g;s|CP_BASE|${CP_BASE}|g;s|ENV_CF_ORG|${ENV_CF_ORG}|g;s|STERLING_HOME|${STERLING_HOME}|g;\
+            s|ENV_CF_SPACE|${ENV_CF_SPACE}|g;s|DB_CONNECTION_STRING|${DB_VM_CONNECTION_STRING}|g;s|ORACLEJAR|ojdbc7|g;\
+            s|DB_USERNAME|${DB_VM_USERNAME}|g;s|DB_PASSWORD|${DB_VM_PASSWORD}|g" $SRC_DIR/containers/create_datasource.py > create_datasource.py \
+     ;fi \
+  && cd $WAS_HOME/profiles/OMS/bin && ./wsadmin.sh -lang jython -f create_datasource.py && ./stopServer.sh server1 && ./startServer.sh server1 \
+  && cd $WAS_HOME/bin && cd /opt/IBM && mkdir -p vm && cd vm && mkdir -p rules models properties \
+  && cd /tmp/jenkins/sharedFiles && cp cmgt-configurator.jar /opt/IBM/vm/rules/ \
+  && cd /opt/IBM/vm/models/ && curl -sO ${VM_MODELS} &&  /opt/IBM/WebSphere85/AppServer/java/bin/jar -xf *.zip \
+  && cd /opt/IBM/vm && vmProp=vm_properties.zip && curl -sO $OMS_DEPENDS/$vmProp && jar xf $vmProp && rm -f $vmProp \
+  && cd /opt/IBM/vm/rules && vmJars=vm_jars.zip && curl -sO $VM_DEPENDS/$vmJars && jar xf $vmJars && rm -f $vmJars \
+  && if [ "$CURR_EAR" != "vismod" ] ; then \
+       cd $WAS_HOME/profiles/OMS/bin \
+       && EAR_DIR=$WAS_HOME/profiles/OMS/installedApps/OMNINode01Cell/SterlingApplications.ear \
+       && sed "s|CURR_EAR|${CURR_EAR}|g;s|EAR_LOC|${SRC_DIR}/sharedFiles/${CURR_EAR}.ear|g" $SRC_DIR/containers/installEAR.py > installEar.py \
+       && ./wsadmin.sh -lang jython -f installEar.py && rm -fr /tmp/jenkins /tmp/$cpRepo && cd $EAR_DIR/$CURR_EAR.war/WEB-INF \
+       && sed -i '/scui-consider-application-cookies-only/!b;n;c\ \ \ \ \ \ \ \ <param-value>true<\/param-value>' web.xml \
+     ;else \
+       cd $WAS_HOME/profiles/OMS/bin && export VM_EAR=Sterling_VM && mkdir -p ~/cmgt/debs/conf && cp $SRC_DIR/sharedFiles/prefs_dev.xml ~/cmgt/debs/conf/prefs.xml \
+       && sed "s|CURR_EAR|${VM_EAR}|g;s|EAR_LOC|${SRC_DIR}/sharedFiles/${VM_EAR}.war|g;" $SRC_DIR/containers/installVmEar.py > installVmEar.py \
+       && ./wsadmin.sh -lang jython -f installVmEar.py \
+     ;fi

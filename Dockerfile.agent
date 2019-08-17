@@ -1,0 +1,29 @@
+FROM SOURCE_IMAGE
+
+LABEL Author.1="Andy Scollard" Email.1="harold.scollard@t-mobile.com"
+
+ARG BUILD_URL
+ARG OMS_DEPENDS
+
+ENV STERLING_HOME=/opt/IBM/Sterling95
+ENV ORACLE_JAR=ojdbc7.jar
+COPY sharedFiles/agent_9.5.jar sharedFiles/startAgent.sh \
+     sharedFiles/log4jconfig.custom.xml.in key/id_rsa key/known_hosts /tmp/
+
+RUN mkdir -p $STERLING_HOME && cd $STERLING_HOME && ln -s /opt/jdk jdk && cd jdk/jre/lib/security && curl -sO ${OMS_DEPENDS}/cacerts \
+    && curl -sO ${OMS_DEPENDS}/ojdbc7.jar \
+    && sed -i '/allows/s/.*/&\n permission javax.management.MBeanTrustPermission "register"/' java.policy \
+    && echo BUILD_URL=$BUILD_URL > $STERLING_HOME/BUILD_URL.txt && export PATH=/opt/jdk/bin:$PATH \
+    && cd $STERLING_HOME && mv /tmp/agent_9.5.jar /tmp/startAgent.sh . \
+    && chmod a+x jdk/bin/* && jar xf agent_9.5.jar properties.jar \
+    && jar xf properties.jar properties && rm -f properties.jar && jar xf agent_9.5.jar jar \
+    && mkdir -p $STERLING_HOME/dbjar/jdbc && ln -s /opt/jdbc $STERLING_HOME/dbjar/jdbc/Oracle  \
+    && echo debug.classpath=false > agent.properties \
+    && echo extract.jars=false >> agent.properties && echo munge.properties=false >> agent.properties \
+    && echo vendorFile=properties/servers.properties >> agent.properties && echo vendor=shell >> agent.properties \
+    && jar xf jar/platform/9_5/resources.jar resources && mkdir ~/.ssh && chmod 600 ~/.ssh  \
+    && cd ~/.ssh && mv /tmp/id_rsa /tmp/known_hosts . && chmod 600 id_rsa \
+	&& cd $STERLING_HOME/dbjar/jdbc/Oracle && curl -sO ${OMS_DEPENDS}/ojdbc7.jar
+
+WORKDIR ${STERLING_HOME}  
+ENTRYPOINT ["./startAgent.sh"]
